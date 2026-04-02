@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>TOP P5 Sigma Tower</title>
+  <style>
+    body { font-family: sans-serif; text-align:center; margin:18px; }
+    #arena { width:320px; height:320px; margin:0 auto; position:relative;
+             border:2px solid #444; border-radius:50%; background:#eef5ff; }
+    .marker, .tower, .player {
+      position:absolute;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      border-radius:999px;
+      font-weight:bold;
+      box-sizing:border-box;
+      user-select:none;
+    }
+    .marker { width:26px; height:26px; background:#fff; border:1px solid #666;
+      color:#222; font-size:13px; }
+    .tower { width:40px; height:40px; border:2px solid #999; font-size:14px;
+      color:#222; background:#fff; cursor:pointer; }
+    .tower-1, .tower-2 { color:#10203c; }
+    .player { width:20px; height:20px; background:#ff6b6b; border:2px solid #d63031; color:#fff; font-size:12px; }
+    #info { margin-top:10px; font-size:16px; font-weight:bold; }
+    button { padding:4px 14px; margin:0 4px; font-size:14px; height:24px; line-height:1; vertical-align:middle; }
+    .text { margin-top:10px; font-size:14px; color:#666}
+  </style>
+</head>
+<body>
+  <h1>TOP P5 Sigma Tower</h1>
+  <div>
+    <div class="text">マクロ押さない式クイズ<br><span style="color:red">℗</span>が半マーカー分度回転したプレイヤー</div>
+  </div>
+  <div class="text">
+    <label><input type="radio" name="debuff" value="far" checked> ファー</label>
+    <label><input type="radio" name="debuff" value="mid"> ミドル</label>
+    <!--
+        <label><input type="radio" name="debuff" value="random"> ランダム</label>
+    -->
+  </div>
+
+  <div id="arena"></div>
+  <div id="info"></div>
+  <div id="modeLabel" class="text"></div>
+  <div>
+    <button id="refresh">Refresh</button>
+    <div class="text">Press 'R' to refresh</div>
+  </div>
+
+  <script>
+    const markers = [
+      { label: "A", color: "#e63946" }, { label: "1", color: "#e63946" },
+      { label: "B", color: "#ffb703" }, { label: "2", color: "#ffb703" },
+      { label: "C", color: "#457b9d" }, { label: "3", color: "#457b9d" },
+      { label: "D", color: "#6a4c93" }, { label: "4", color: "#6a4c93" }
+    ];
+    const farPattern = [
+      {angle:0, type:2},{angle:90,type:1},{angle:135,type:2},
+      {angle:225,type:2},{angle:270,type:1}
+    ];
+    const midPattern = [
+      {angle:0, type:1},{angle:90,type:2},{angle:135,type:1},
+      {angle:180,type:1},{angle:225,type:2},{angle:315,type:1}
+    ];
+
+    const arena = document.getElementById("arena");
+    const info = document.getElementById("info");
+    const modeLabel = document.getElementById("modeLabel");
+    let towers = [];
+    let correctTower = null;
+
+    const polar = (x,y,r,a) => {
+      const rad = (a - 90) * Math.PI / 180;
+      return {left: x + r * Math.cos(rad), top: y + r * Math.sin(rad)};
+    };
+
+    const normalizeAngle = a => ((a % 360) + 360) % 360;
+
+    function buildMarkers() {
+      arena.innerHTML = "";
+      markers.forEach((m, i) => {
+        const angle = i * 45;
+        const pos = polar(160, 160, 100, angle);
+        const el = document.createElement("div");
+        el.className = "marker";
+        el.textContent = m.label;
+        el.style.left = `${pos.left}px`;
+        el.style.top = `${pos.top}px`;
+        el.style.transform = "translate(-50%, -50%)";
+        el.style.background = m.color;
+        el.style.color = "#fff";
+        arena.appendChild(el);
+      });
+    }
+
+    function createTower(angle, label, cls, type, playerAngle, step) {
+      const pos = polar(160, 160, 140, angle);
+      const el = document.createElement("div");
+      el.className = "tower " + cls;
+      el.textContent = label;
+      el.style.left = `${pos.left}px`;
+      el.style.top = `${pos.top}px`;
+      el.style.transform = "translate(-50%, -50%)";
+      el.dataset.angle = angle;
+      el.dataset.type = type;
+      
+      const dist = angleDistance(playerAngle, angle);
+      if (dist > step) {
+        el.style.opacity = "0.5";
+        el.style.pointerEvents = "none";
+      } else {
+        el.addEventListener("click", onTowerClick);
+      }
+      
+      arena.appendChild(el);
+      towers.push({el, angle, type});
+    }
+
+    function createPlayer(angle) {
+      const pos = polar(160, 160, 60, angle);
+      const el = document.createElement("div");
+      el.className = "player";
+      el.textContent = "P";
+      el.style.left = `${pos.left}px`;
+      el.style.top = `${pos.top}px`;
+      el.style.transform = "translate(-50%, -50%)";
+      arena.appendChild(el);
+    }
+
+    function angleDistance(a, b) {
+      const d = Math.abs(normalizeAngle(a) - normalizeAngle(b));
+      return Math.min(d, 360 - d);
+    }
+
+    function findNearestTower(target) {
+      let best = null;
+      let bestD = Infinity;
+      towers.forEach(t => {
+        const d = angleDistance(t.angle, target);
+        if (d < bestD) {
+          bestD = d;
+          best = t;
+        }
+      });
+      return {tower: best, dist: bestD};
+    }
+
+    function calculateCorrectTower(playerAngle, mode) {
+      const step = mode === "mid" ? 45 : 22.5;
+      const targetCW  = normalizeAngle(playerAngle + step);
+      const targetCCW = normalizeAngle(playerAngle - step);
+
+      const cw = findNearestTower(targetCW);
+      const ccw = findNearestTower(targetCCW);
+
+      const validCW  = cw.tower && cw.dist <= 22.5 ? cw.tower : null;
+      const validCCW = ccw.tower && ccw.dist <= 22.5 ? ccw.tower : null;
+
+      if (validCW && validCCW) {
+        if (validCW.type === 2 && validCCW.type !== 2) return validCW;
+        if (validCCW.type === 2 && validCW.type !== 2) return validCCW;
+        return cw.dist <= ccw.dist ? validCW : validCCW;
+      }
+      if (validCW) return validCW;
+      if (validCCW) return validCCW;
+
+      return towers.reduce((best, t) => {
+        if (!best) return t;
+        return angleDistance(t.angle, targetCW) < angleDistance(best.angle, targetCW) ? t : best;
+      }, null);
+    }
+
+    function onTowerClick(e) {
+      const clickedTower = towers.find(t => t.el === e.target);
+      const isCorrect = clickedTower === correctTower;
+      if (isCorrect) {
+        info.textContent = "正解";
+        correctTower.el.style.border = "4px solid green";
+        correctTower.el.style.background = "#ccffcc";
+      } else {
+        info.textContent = "不正解";
+        clickedTower.el.style.border = "4px solid red";
+        clickedTower.el.style.background = "#ffcccc";
+        correctTower.el.style.border = "4px solid green";
+        correctTower.el.style.background = "#ccffcc";
+      }
+    }
+
+    function applyConfig() {
+      towers = [];
+      correctTower = null;
+      info.textContent = "/";
+      buildMarkers();
+
+      let mode = document.querySelector('input[name="debuff"]:checked').value;
+      if (mode === "random") {
+        mode = Math.random() < 0.5 ? "far" : "mid";
+      }
+      modeLabel.textContent = `モード: ${mode === "far" ? "ファー" : "ミドル"}`;
+
+      const offset = Math.floor(Math.random()*8)*45;
+      const base = mode==="far" ? offset : offset+22.5;
+      const pattern = mode==="far" ? farPattern : midPattern;
+      
+      const playerBaseAngle = Math.floor(Math.random()*8)*45;
+      const playerAngle = playerBaseAngle + 22.5;
+      createPlayer(playerAngle);
+      
+      const step = mode === "mid" ? 45 : 22.5;
+      pattern.forEach(item => {
+        const angle = normalizeAngle(base + item.angle);
+        createTower(angle, item.type.toString(), item.type===1 ? "tower-1":"tower-2", item.type, playerAngle, step);
+      });
+      
+      correctTower = calculateCorrectTower(playerAngle, mode);
+    }
+
+    document.getElementById("refresh").addEventListener("click", applyConfig);
+    document.querySelectorAll('input[name="debuff"]').forEach(radio => {
+      radio.addEventListener("change", applyConfig);
+    });
+    document.addEventListener("keydown", e => {
+      if (e.key === "r" || e.key === "R") applyConfig();
+    });
+    applyConfig();
+  </script>
+</body>
+</html>
